@@ -452,6 +452,7 @@ function captiveportal_init_rules($reinit = false) {
 	captiveportal_ipfw_set_context($cpzone);
 
 	$cpips = array();
+	$cpipsv6 = array();
 	$ifaces = get_configured_interface_list();
 	$cpinterfaces = explode(",", $config['captiveportal'][$cpzone]['interface']);
 	$firsttime = 0;
@@ -461,18 +462,22 @@ function captiveportal_init_rules($reinit = false) {
 		$tmpif = get_real_interface($cpifgrp);
 		if (!empty($tmpif)) {
 			$cpipm = get_interface_ip($cpifgrp);
-			if (is_ipaddr($cpipm)) {
+			if (is_ipaddrv4($cpipm)) {
 				$carpif = link_ip_to_carp_interface($cpipm);
 				if (!empty($carpif)) {
 					$carpsif = explode(" ", $carpif);
 					foreach ($carpsif as $cpcarp) {
 						mwexec("/usr/local/sbin/ipfw_context -a {$cpzone} -n {$cpcarp}", true);
 						$carpip = find_interface_ip($cpcarp);
-						if (is_ipaddr($carpip))
+						if (is_ipaddrv4($carpip))
 							$cpips[] = $carpip;
 					}
 				}
 				$cpips[] = $cpipm;
+			}
+			$cpipmv6 = get_interface_ipv6($cpifgrp);
+			if (is_ipaddrv6($cpipmv6)) {
+				$cpipsv6[] = $cpipmv6;
 			}
 			mwexec("/usr/local/sbin/ipfw_context -a {$cpzone} -n {$tmpif}", true);
 		}
@@ -503,7 +508,9 @@ EOD;
 
 	$rulenum = 65310;
 	$ipcount = 0;
+	$ipcountv6 = 0;
 	$ips = "";
+	$ipsv6 = "";
 	foreach ($cpips as $cpip) {
 		if($ipcount == 0) {
 			$ips = "{$cpip} ";
@@ -512,15 +519,62 @@ EOD;
 		}
 		$ipcount++;
 	}
-	$ips = "{ 255.255.255.255 or {$ips} }";
-	$cprules .= "add {$rulenum} pass ip from any to {$ips} in\n";
-	$rulenum++;
-	$cprules .= "add {$rulenum} pass ip from {$ips} to any out\n";
-	$rulenum++;
-	$cprules .= "add {$rulenum} pass icmp from {$ips} to any out icmptype 0\n";
-	$rulenum++;
-	$cprules .= "add {$rulenum} pass icmp from any to {$ips} in icmptype 8 \n";
-	$rulenum++;
+	foreach ($cpipsv6 as $cpip) {
+		if($ipcountv6 == 0) {
+			$ipsv6 = "{$cpip} ";
+		} else {
+			$ipsv6 .= "or {$cpip} ";
+		}
+		$ipcountv6++;
+	}
+
+	if ($ipcount > 0) {
+		$ips = "{ 255.255.255.255 or {$ips} }";
+		
+		$cprules .= "add {$rulenum} allow ip4 from any to {$ips} in\n";
+		$rulenum++;
+		$cprules .= "add {$rulenum} allow ip4 from {$ips} to any out\n";
+		$rulenum++;
+		/*
+		 * 0 - Echo Reply
+		 * 8 - Echo Request
+		 */
+		$cprules .= "add {$rulenum} allow icmp from {$ips} to any out icmptype 0\n";
+		$rulenum++;
+		$cprules .= "add {$rulenum} allow icmp from any to {$ips} in icmptype 8\n";
+		$rulenum++;
+	}
+	
+	if ($ipcountv6 > 0) {
+		/*
+		 * fe80::/10 - link local address
+		 * ff02::1:2 - DHCP servers and relay agents on the local network segment
+		 * ff05::1:3 - DHCP servers on the local network site
+		 */
+		$ipsv6_in = "{ fe80::/10 or ff02::1:2 or ff05::1:3 or {$ipsv6} }";
+		$ipsv6_out = "{ fe80::/10 or {$ipsv6} }";
+		
+		$cprules .= "add {$rulenum} allow ip6 from any to {$ipsv6_in} in\n";
+		$rulenum++;
+		$cprules .= "add {$rulenum} allow ip6 from {$ipsv6_out} to any out\n";
+		$rulenum++;
+		/*
+		 *   0 - Destination Unreachable
+		 *   1 - Packet Too Big
+		 * 128 - Echo Request
+		 * 129 - Echo Reply
+		 * 133 - Router Solicitation (NDP)
+		 * 134 - Router Advertisement (NDP)
+		 * 135 - Neighbor Solicitation (NDP)
+		 * 136 - Neighbor Advertisement (NDP)
+		 * 137 - Redirect (NDP)
+		 */
+		$cprules .= "add {$rulenum} allow ipv6-icmp from {$ipsv6_out} to any out icmp6types 1,2,129,134,135,136,137\n";
+		$rulenum++;
+		$cprules .= "add {$rulenum} allow ipv6-icmp from any to {$ipsv6_in} in icmp6types 1,2,128,133,135,136\n";
+		$rulenum++;
+	}
+
 	/* Allowed ips */
 	$cprules .= "add {$rulenum} pipe tablearg ip from table(3) to any in\n";
 	$rulenum++;
@@ -540,15 +594,18 @@ EOD;
 
 	if (isset($config['captiveportal'][$cpzone]['httpslogin'])) {
 		$listenporthttps = $listenporthttp + 1;
-		$cprules .= "add 65531 fwd 127.0.0.1,{$listenporthttps} tcp from any to any dst-port 443 in\n";
+		$cprules .= "add 65528 fwd 127.0.0.1,{$listenporthttps} ip4 from any to any in proto tcp dst-port 443\n";
+		$cprules .= "add 65529 fwd ::1,{$listenporthttps} ip6 from any to any in proto tcp dst-port 443\n";
 	}
 	
 	$cprules .= <<<EOD
 
 # redirect non-authenticated clients to captive portal
-add 65532 fwd 127.0.0.1,{$listenporthttp} tcp from any to any dst-port 80 in 
+add 65530 fwd 127.0.0.1,{$listenporthttp} ip4 from any to any in proto tcp dst-port 80
+add 65531 fwd ::1,{$listenporthttp} ip6 from any to any in proto tcp dst-port 80 
 # let the responses from the captive portal web server back out
-add 65533 pass tcp from any to any out
+add 65532 allow ip4 from any to any out proto tcp
+add 65533 allow ip6 from any to any out proto tcp
 # block everything else
 add 65534 deny all from any to any
 
