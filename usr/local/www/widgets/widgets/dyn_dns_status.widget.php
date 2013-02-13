@@ -104,15 +104,18 @@ function dyndnsCheckIP($int) {
           <td class="listlr">
             <?php
               $filename = "{$g['conf_path']}/dyndns_{$if}{$dyndns['type']}" . escapeshellarg($dyndns['host']) . "{$dyndns['id']}.cache";
-              $ipaddr = dyndnsCheckIP($if);
-              if(file_exists($filename)) {
+              if (file_exists($filename)) {
+              	$ipaddr = dyndnsCheckIP($if);
                 $cached_ip_s = split(":", file_get_contents($filename));
                 $cached_ip = $cached_ip_s[0];
-                if($ipaddr <> $cached_ip) echo "<font color='red'>";
-                  else echo "<font color='green'>";
+                if ($ipaddr <> $cached_ip)
+                	echo "<font color='red'>";
+                else
+                	echo "<font color='green'>";
                 echo htmlspecialchars($cached_ip);
                 echo "</font>";
-              } else echo "N/A";
+              } else
+              	echo "N/A";
             ?>
           </td>
         </tr>
