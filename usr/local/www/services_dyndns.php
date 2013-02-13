@@ -1,7 +1,7 @@
 <?php
 /* $Id$ */
 /*
-	Copyright (C) 2008 Ermal Luçi
+	Copyright (C) 2008 Ermal Luï¿½i
 	All rights reserved.
 
 	Redistribution and use in source and binary forms, with or without
@@ -166,8 +166,8 @@ include("head.inc");
 		  <td class="listr">
 		  <?php
 			$filename = "{$g['conf_path']}/dyndns_{$iface}{$dyndns['type']}" . escapeshellarg($dyndns['host']) . "{$dyndns['id']}.cache";
-			$ipaddr = dyndnsCheckIP($iface);
 			if (file_exists($filename)) {
+				$ipaddr = dyndnsCheckIP($iface);
 				$cached_ip_s = explode(":", file_get_contents($filename));
 				$cached_ip = $cached_ip_s[0];
 				if ($ipaddr <> $cached_ip) 
